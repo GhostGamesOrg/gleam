@@ -66,7 +66,7 @@ use crate::ast::{
 };
 use crate::build::Target;
 use crate::parse::extra::ModuleExtra;
-use crate::type_::expression::SupportedTargets;
+use crate::type_::expression::Implementations;
 use crate::type_::Deprecation;
 use ecow::EcoString;
 use error::{LexicalError, ParseError, ParseErrorType};
@@ -84,7 +84,6 @@ mod tests;
 pub struct Parsed {
     pub module: UntypedModule,
     pub extra: ModuleExtra,
-    pub warnings: Vec<Warning>,
 }
 
 #[derive(Debug, Default)]
@@ -101,11 +100,6 @@ impl Attributes {
     }
 }
 
-#[derive(Debug, Eq, PartialEq, Clone)]
-pub enum Warning {
-    ReservedWord { location: SrcSpan, word: EcoString },
-}
-
 //
 // Public Interface
 //
@@ -114,7 +108,6 @@ pub fn parse_module(src: &str) -> Result<Parsed, ParseError> {
     let mut parser = Parser::new(lex);
     let mut parsed = parser.parse_module()?;
     parsed.extra = parser.extra;
-    parsed.warnings = parser.warnings;
     Ok(parsed)
 }
 
@@ -161,7 +154,6 @@ pub struct Parser<T: Iterator<Item = LexResult>> {
     tok1: Option<Spanned>,
     extra: ModuleExtra,
     doc_comments: VecDeque<(u32, String)>,
-    warnings: Vec<Warning>,
 }
 impl<T> Parser<T>
 where
@@ -175,7 +167,6 @@ where
             tok1: None,
             extra: ModuleExtra::new(),
             doc_comments: VecDeque::new(),
-            warnings: vec![],
         };
         let _ = parser.next_tok();
         let _ = parser.next_tok();
@@ -194,7 +185,6 @@ where
         Ok(Parsed {
             module,
             extra: Default::default(),
-            warnings: Default::default(),
         })
     }
 
@@ -257,12 +247,12 @@ where
             // Module Constants
             (Some((_, Token::Const, _)), _) => {
                 self.advance();
-                self.parse_module_const(false)
+                self.parse_module_const(false, &attributes)
             }
             (Some((_, Token::Pub, _)), Some((_, Token::Const, _))) => {
                 self.advance();
                 self.advance();
-                self.parse_module_const(true)
+                self.parse_module_const(true, &attributes)
             }
 
             // Function
@@ -744,15 +734,7 @@ where
                     // Call
                     let args = self.parse_fn_args()?;
                     let (_, end) = self.expect_one(&Token::RightParen)?;
-                    match make_call(expr, args, start, end) {
-                        Ok(e) => expr = e,
-                        Err(_) => {
-                            return parse_error(
-                                ParseErrorType::TooManyArgHoles,
-                                SrcSpan { start, end },
-                            )
-                        }
-                    }
+                    expr = make_call(expr, args, start, end)?;
                 }
             } else {
                 // done
@@ -1562,7 +1544,11 @@ where
             deprecation: std::mem::take(&mut attributes.deprecated),
             external_erlang: attributes.external_erlang.take(),
             external_javascript: attributes.external_javascript.take(),
-            supported_targets: SupportedTargets::all(),
+            implementations: Implementations {
+                gleam: true,
+                uses_erlang_externals: false,
+                uses_javascript_externals: false,
+            },
         })))
     }
 
@@ -1692,12 +1678,16 @@ where
                 location,
                 value,
             }))))
-        } else if let Some((start, _, end)) = self.maybe_discard_name() {
+        } else if let Some((start, name, end)) = self.maybe_discard_name() {
             let mut location = SrcSpan { start, end };
             if label.is_some() {
                 location.start = start
             };
-            Ok(Some(ParserArg::Hole { location, label }))
+            Ok(Some(ParserArg::Hole {
+                location,
+                name,
+                label,
+            }))
         } else {
             Ok(None)
         }
@@ -2150,6 +2140,7 @@ where
     fn parse_module_const(
         &mut self,
         public: bool,
+        attributes: &Attributes,
     ) -> Result<Option<UntypedDefinition>, ParseError> {
         let (start, name, end) = self.expect_name()?;
         let documentation = self.take_documentation(start);
@@ -2166,7 +2157,12 @@ where
                 annotation,
                 value: Box::new(value),
                 type_: (),
-                supported_targets: SupportedTargets::all(),
+                deprecation: attributes.deprecated.clone(),
+                implementations: Implementations {
+                    gleam: true,
+                    uses_erlang_externals: false,
+                    uses_javascript_externals: false,
+                },
             })))
         } else {
             parse_error(
@@ -2788,17 +2784,6 @@ where
                 }
 
                 Some(Ok(tok)) => {
-                    if let (start, Token::Name { name }, end) = &tok {
-                        if let "auto" | "delegate" | "derive" | "else" | "implement" | "macro"
-                        | "echo" | "test" = name.as_str()
-                        {
-                            self.warnings.push(Warning::ReservedWord {
-                                location: SrcSpan::new(*start, *end),
-                                word: name.clone(),
-                            });
-                        }
-                    }
-
                     nxt = Some(tok);
                     break;
                 }
@@ -3259,6 +3244,7 @@ fn is_reserved_word(tok: Token) -> bool {
 pub enum ParserArg {
     Arg(Box<CallArg<UntypedExpr>>),
     Hole {
+        name: EcoString,
         location: SrcSpan,
         label: Option<EcoString>,
     },
@@ -3274,10 +3260,25 @@ pub fn make_call(
     let args = args
         .into_iter()
         .map(|a| match a {
-            ParserArg::Arg(arg) => *arg,
-            ParserArg::Hole { location, label } => {
+            ParserArg::Arg(arg) => Ok(*arg),
+            ParserArg::Hole {
+                location,
+                name,
+                label,
+            } => {
                 num_holes += 1;
-                CallArg {
+
+                if name != "_" {
+                    return parse_error(
+                        ParseErrorType::UnexpectedToken {
+                            expected: vec!["An expression".into(), "An underscore".into()],
+                            hint: None,
+                        },
+                        location,
+                    );
+                }
+
+                Ok(CallArg {
                     implicit: false,
                     label,
                     location,
@@ -3285,10 +3286,10 @@ pub fn make_call(
                         location,
                         name: CAPTURE_VARIABLE.into(),
                     },
-                }
+                })
             }
         })
-        .collect();
+        .collect::<Result<_, _>>()?;
     let call = UntypedExpr::Call {
         location: SrcSpan { start, end },
         fun: Box::new(fun),
@@ -3314,7 +3315,7 @@ pub fn make_call(
             return_annotation: None,
         }),
 
-        _ => parse_error(ParseErrorType::TooManyArgHoles, call.location()),
+        _ => parse_error(ParseErrorType::TooManyArgHoles, SrcSpan { start, end }),
     }
 }
 

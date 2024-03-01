@@ -1,10 +1,99 @@
 # Changelog
 
+## Unreleased
+
+### Build tool
+
+- Fixed a bug where the exported package interface would not have a module's
+  documentation.
+
+## v1.0.0-rc2 - 2024-02-14
+
+### Bug fixes
+
+- Fixed a bug where the exhaustiveness checker could crash for some generic
+  types.
+
+### Formatter
+
+- The format used by the formatter has been improved in some niche cases.
+
+## v1.0.0-rc1 - 2024-02-10
+
+### Language changes
+
+- Using a reserved word is now a compile error, not a warning.
+- Inexhaustive matches are now compile errors, not warnings.
+- The warning for an unused module alias now shows how to not assign a name to
+  the module.
+- Type aliases with unused type parameters now emit an error.
+- Type definitions with duplicate type parameters now emit an error.
+
+### Formatter
+
+- Now the formatter will nest pipelines and binary operators that are used as
+  function arguments, list items or as tuple items.
+- The format function literals used as the last argument in a function call
+  on long lines has been improved.
+
+### Build tool
+
+- If a package contains a `todo` expression then the build tool will now refuse
+  to publish it to Hex.
+- The search bar in generated docs now has a darker background color.
+- `gleam export` now takes a `package-interface` option to export a json file
+  containing metadata about the root package.
+- `gleam docs build` now creates a json file containing metadata about the root
+  package.
+- The order of dependencies in `manifest.toml` is now in alphabetical order.
+- The search bar in generated docs now has a darker background color.
+- The generated docs no longer shows whether an argument is discarded or
+  not in a function signature.
+- It is now possible to use `gleam run -m` to run a dependency module even if
+  that dependency uses a compile target that your project does not support.
+
+### Bug fixes
+
+- Fixed a bug the build tool could be make to attempt to run a main function
+  that does not support the current target in some circumstances.
+- Fixed a bug where the exhaustiveness checker could crash when checking nested
+  values inserted into the parent type using type parameters.
+- Fixed a bug where `functionname(_name)` would incorrectly parse as a function
+  capture instead of a syntax error.
+- Fixed a bug where external only functions would "successfully" compile for a
+  target they do not support, leading to a runtime error.
+
+
+## v0.34.1 - 2023-01-17
+
+### Build tool changes
+
+- Support has been added for using SourceHut as a repository.
+
+### Bug fixes
+
+- Fixed a bug where long function headers with external implementations could
+  format incorrectly.
+- The `@deprecated` attribute can now be used to annotate module constants.
+  This will cause a warning to be emitted when the constant is used.
+
+
+## v0.34.0 - 2023-01-16
+
 ## v0.34.0-rc3 - 2023-01-12
 
 ### Language changes
 
 - "echo" is now a reserved word.
+- A warning is no longer emitted when a function has a Gleam implementation as
+  well as external implementations for both targets. This is because having a
+  default Gleam implementation means the code is future-proof and continues to
+  be cross platform even if a new target is added.
+
+### Bug fixes
+
+- Fixed a bug where function heads would go over the line limit in the
+  formatter.
 
 
 ## v0.34.0-rc2 - 2023-01-11
@@ -18,14 +107,15 @@
   target.
 
 
-## v0.34.0-rc1 - 2024-02-07
+## v0.34.0-rc1 - 2024-01-07
 
 ### Language changes
 
 - Warn about function body not being used, because it already has external
   implementations for all targets.
-- It's now possible to compile a project with external functions that are not
-  supported by the compilation target as long as those are not actually used.
+- It's now possible to compile a project with external functions in dependency
+  packages that are not supported by the compilation target so long as they are
+  not used on the current target.
 - The error message for when one imports a constructor instead of an homonymous
   type has been improved.
 
